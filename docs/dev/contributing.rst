@@ -3,6 +3,8 @@
 Contributor's Guide
 ===================
 
+.. image:: https://farm5.staticflickr.com/4237/35550408335_7671fde302_k_d.jpg
+
 If you're reading this, you're probably interested in contributing to Requests.
 Thank you very much! Open source projects live-and-die based on the support
 they receive from others, and the fact that you're even considering
@@ -187,7 +189,7 @@ through the `GitHub issues`_, **both open and closed**, to confirm that the bug
 hasn't been reported before. Duplicate bug reports are a huge drain on the time
 of other contributors, and should be avoided as much as possible.
 
-.. _GitHub issues: https://github.com/kennethreitz/requests/issues
+.. _GitHub issues: https://github.com/requests/requests/issues
 
 
 Feature Requests

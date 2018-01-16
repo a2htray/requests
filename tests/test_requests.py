@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 """Tests for Requests."""
@@ -24,7 +23,7 @@ from requests.cookies import (
 from requests.exceptions import (
     ConnectionError, ConnectTimeout, InvalidSchema, InvalidURL,
     MissingSchema, ReadTimeout, Timeout, RetryError, TooManyRedirects,
-    ProxyError, InvalidHeader, UnrewindableBodyError)
+    ProxyError, InvalidHeader, UnrewindableBodyError, SSLError, InvalidProxyURL)
 from requests.models import PreparedRequest
 from requests.structures import CaseInsensitiveDict
 from requests.sessions import SessionRedirectMixin
@@ -33,6 +32,7 @@ from requests.hooks import default_hooks
 
 from .compat import StringIO, u
 from .utils import override_environ
+from urllib3.util import Timeout as Urllib3Timeout
 
 # Requests to this URL should always fail with a connection timeout (nothing
 # listening on that port)
@@ -64,6 +64,8 @@ class TestRequests:
         requests.put
         requests.patch
         requests.post
+        # Not really an entry point, but people rely on it.
+        from requests.packages.urllib3.poolmanager import PoolManager
 
     @pytest.mark.parametrize(
         'exception, url', (
@@ -452,7 +454,7 @@ class TestRequests:
     @pytest.mark.parametrize('key', ('User-agent', 'user-agent'))
     def test_user_agent_transfers(self, httpbin, key):
 
-        heads = {key: 'Mozilla/5.0 (github.com/kennethreitz/requests)'}
+        heads = {key: 'Mozilla/5.0 (github.com/requests/requests)'}
 
         r = requests.get(httpbin('user-agent'), headers=heads)
         assert heads[key] in r.text
@@ -523,6 +525,19 @@ class TestRequests:
         # any proxy related error (address resolution, no route to host, etc) should result in a ProxyError
         with pytest.raises(ProxyError):
             requests.get('http://localhost:1', proxies={'http': 'non-resolvable-address'})
+
+    def test_proxy_error_on_bad_url(self, httpbin, httpbin_secure):
+        with pytest.raises(InvalidProxyURL):
+            requests.get(httpbin_secure(), proxies={'https': 'http:/badproxyurl:3128'})
+
+        with pytest.raises(InvalidProxyURL):
+            requests.get(httpbin(), proxies={'http': 'http://:8080'})
+
+        with pytest.raises(InvalidProxyURL):
+            requests.get(httpbin_secure(), proxies={'https': 'https://'})
+
+        with pytest.raises(InvalidProxyURL):
+            requests.get(httpbin(), proxies={'http': 'http:///example.com:8080'})
 
     def test_basicauth_with_netrc(self, httpbin):
         auth = ('user', 'pass')
@@ -785,6 +800,10 @@ class TestRequests:
             requests.get(httpbin_secure(), cert=('.', INVALID_PATH))
         assert str(e.value) == 'Could not find the TLS key file, invalid path: {0}'.format(INVALID_PATH)
 
+    def test_http_with_certificate(self, httpbin):
+        r = requests.get(httpbin(), cert='.')
+        assert r.status_code == 200
+
     def test_https_warnings(self, httpbin_secure, httpbin_ca_bundle):
         """warnings are emitted with requests.get"""
         if HAS_MODERN_SSL or HAS_PYOPENSSL:
@@ -805,6 +824,15 @@ class TestRequests:
         warnings_category = tuple(
             item.category.__name__ for item in warning_records)
         assert warnings_category == warnings_expected
+
+    def test_certificate_failure(self, httpbin_secure):
+        """
+        When underlying SSL problems occur, an SSLError is raised.
+        """
+        with pytest.raises(SSLError):
+            # Our local httpbin does not have a trusted CA, so this call will
+            # fail if we use our default trust bundle.
+            requests.get(httpbin_secure('status', '200'))
 
     def test_urlencoded_get_query_multivalued_param(self, httpbin):
 
@@ -1336,6 +1364,44 @@ class TestRequests:
         assert 'http://' in s2.adapters
         assert 'https://' in s2.adapters
 
+    def test_session_get_adapter_prefix_matching(self, httpbin):
+        prefix = 'https://example.com'
+        more_specific_prefix = prefix + '/some/path'
+
+        url_matching_only_prefix = prefix + '/another/path'
+        url_matching_more_specific_prefix = more_specific_prefix + '/longer/path'
+        url_not_matching_prefix = 'https://another.example.com/'
+
+        s = requests.Session()
+        prefix_adapter = HTTPAdapter()
+        more_specific_prefix_adapter = HTTPAdapter()
+        s.mount(prefix, prefix_adapter)
+        s.mount(more_specific_prefix, more_specific_prefix_adapter)
+
+        assert s.get_adapter(url_matching_only_prefix) is prefix_adapter
+        assert s.get_adapter(url_matching_more_specific_prefix) is more_specific_prefix_adapter
+        assert s.get_adapter(url_not_matching_prefix) not in (prefix_adapter, more_specific_prefix_adapter)
+
+    def test_session_get_adapter_prefix_matching_mixed_case(self, httpbin):
+        mixed_case_prefix = 'hTtPs://eXamPle.CoM/MixEd_CAse_PREfix'
+        url_matching_prefix = mixed_case_prefix + '/full_url'
+
+        s = requests.Session()
+        my_adapter = HTTPAdapter()
+        s.mount(mixed_case_prefix, my_adapter)
+
+        assert s.get_adapter(url_matching_prefix) is my_adapter
+
+    def test_session_get_adapter_prefix_matching_is_case_insensitive(self, httpbin):
+        mixed_case_prefix = 'hTtPs://eXamPle.CoM/MixEd_CAse_PREfix'
+        url_matching_prefix_with_different_case = 'HtTpS://exaMPLe.cOm/MiXeD_caSE_preFIX/another_url'
+
+        s = requests.Session()
+        my_adapter = HTTPAdapter()
+        s.mount(mixed_case_prefix, my_adapter)
+
+        assert s.get_adapter(url_matching_prefix_with_different_case) is my_adapter
+
     def test_header_remove_is_case_insensitive(self, httpbin):
         # From issue #1321
         s = requests.Session()
@@ -1386,14 +1452,17 @@ class TestRequests:
         headers_list = {'baz': ['foo', 'bar']}
 
         # Test for int
-        with pytest.raises(InvalidHeader):
+        with pytest.raises(InvalidHeader) as excinfo:
             r = requests.get(httpbin('get'), headers=headers_int)
+        assert 'foo' in str(excinfo.value)
         # Test for dict
-        with pytest.raises(InvalidHeader):
+        with pytest.raises(InvalidHeader) as excinfo:
             r = requests.get(httpbin('get'), headers=headers_dict)
+        assert 'bar' in str(excinfo.value)
         # Test for list
-        with pytest.raises(InvalidHeader):
+        with pytest.raises(InvalidHeader) as excinfo:
             r = requests.get(httpbin('get'), headers=headers_list)
+        assert 'baz' in str(excinfo.value)
 
     def test_header_no_return_chars(self, httpbin):
         """Ensure that a header containing return character sequences raise an
@@ -1660,6 +1729,12 @@ class TestRequests:
         it = r.iter_lines()
         next(it)
         assert len(list(it)) == 3
+
+    def test_response_context_manager(self, httpbin):
+        with requests.get(httpbin('stream/4'), stream=True) as response:
+            assert isinstance(response, requests.Response)
+
+        assert response.raw.closed
 
     def test_unconsumed_session_response_closes_connection(self, httpbin):
         s = requests.session()
@@ -2013,7 +2088,12 @@ class TestTimeout:
             requests.get(httpbin('get'), timeout=timeout)
         assert error_text in str(e)
 
-    def test_none_timeout(self, httpbin):
+    @pytest.mark.parametrize(
+        'timeout', (
+            None,
+            Urllib3Timeout(connect=None, read=None)
+        ))
+    def test_none_timeout(self, httpbin, timeout):
         """Check that you can set None as a valid timeout value.
 
         To actually test this behavior, we'd want to check that setting the
@@ -2022,33 +2102,48 @@ class TestTimeout:
         Instead we verify that setting the timeout to None does not prevent the
         request from succeeding.
         """
-        r = requests.get(httpbin('get'), timeout=None)
+        r = requests.get(httpbin('get'), timeout=timeout)
         assert r.status_code == 200
 
-    def test_read_timeout(self, httpbin):
+    @pytest.mark.parametrize(
+        'timeout', (
+            (None, 0.1),
+            Urllib3Timeout(connect=None, read=0.1)
+        ))
+    def test_read_timeout(self, httpbin, timeout):
         try:
-            requests.get(httpbin('delay/10'), timeout=(None, 0.1))
+            requests.get(httpbin('delay/10'), timeout=timeout)
             pytest.fail('The recv() request should time out.')
         except ReadTimeout:
             pass
 
-    def test_connect_timeout(self):
+    @pytest.mark.parametrize(
+        'timeout', (
+            (0.1, None),
+            Urllib3Timeout(connect=0.1, read=None)
+        ))
+    def test_connect_timeout(self, timeout):
         try:
-            requests.get(TARPIT, timeout=(0.1, None))
+            requests.get(TARPIT, timeout=timeout)
             pytest.fail('The connect() request should time out.')
         except ConnectTimeout as e:
             assert isinstance(e, ConnectionError)
             assert isinstance(e, Timeout)
 
-    def test_total_timeout_connect(self):
+    @pytest.mark.parametrize(
+        'timeout', (
+            (0.1, 0.1),
+            Urllib3Timeout(connect=0.1, read=0.1)
+        ))
+    def test_total_timeout_connect(self, timeout):
         try:
-            requests.get(TARPIT, timeout=(0.1, 0.1))
+            requests.get(TARPIT, timeout=timeout)
             pytest.fail('The connect() request should time out.')
         except ConnectTimeout:
             pass
 
     def test_encoded_methods(self, httpbin):
-        """See: https://github.com/kennethreitz/requests/issues/2316"""
+        """See: https://github.com/requests/requests/issues/2316"""
         r = requests.request(b'GET', httpbin('get'))
         assert r.ok
 
@@ -2193,7 +2288,7 @@ def test_prepared_copy(kwargs):
 
 
 def test_urllib3_retries(httpbin):
-    from requests.packages.urllib3.util import Retry
+    from urllib3.util import Retry
     s = requests.Session()
     s.mount('http://', HTTPAdapter(max_retries=Retry(
         total=2, status_forcelist=[500]
@@ -2211,15 +2306,6 @@ def test_urllib3_pool_connection_closed(httpbin):
         s.get(httpbin('status/200'))
     except ConnectionError as e:
         assert u"Pool is closed." in str(e)
-
-
-def test_vendor_aliases():
-    from requests.packages import urllib3
-    from requests.packages import chardet
-    from requests.packages import idna
-
-    with pytest.raises(ImportError):
-        from requests.packages import webbrowser
 
 
 class TestPreparingURLs(object):
@@ -2287,12 +2373,12 @@ class TestPreparingURLs(object):
         'input, expected',
         (
             (
-                b"http+unix://%2Fvar%2Frun%2Fsocket/path",
-                u"http+unix://%2fvar%2frun%2fsocket/path",
+                b"http+unix://%2Fvar%2Frun%2Fsocket/path%7E",
+                u"http+unix://%2Fvar%2Frun%2Fsocket/path~",
             ),
             (
-                u"http+unix://%2Fvar%2Frun%2Fsocket/path",
-                u"http+unix://%2fvar%2frun%2fsocket/path",
+                u"http+unix://%2Fvar%2Frun%2Fsocket/path%7E",
+                u"http+unix://%2Fvar%2Frun%2Fsocket/path~",
             ),
             (
                 b"mailto:user@example.org",
@@ -2325,12 +2411,12 @@ class TestPreparingURLs(object):
             (
                 b"http+unix://%2Fvar%2Frun%2Fsocket/path",
                 {"key": "value"},
-                u"http+unix://%2fvar%2frun%2fsocket/path?key=value",
+                u"http+unix://%2Fvar%2Frun%2Fsocket/path?key=value",
             ),
             (
                 u"http+unix://%2Fvar%2Frun%2Fsocket/path",
                 {"key": "value"},
-                u"http+unix://%2fvar%2frun%2fsocket/path?key=value",
+                u"http+unix://%2Fvar%2Frun%2Fsocket/path?key=value",
             ),
             (
                 b"mailto:user@example.org",
@@ -2346,7 +2432,7 @@ class TestPreparingURLs(object):
     )
     def test_parameters_for_nonstandard_schemes(self, input, params, expected):
         """
-        Setting paramters for nonstandard schemes is allowed if those schemes
+        Setting parameters for nonstandard schemes is allowed if those schemes
         begin with "http", and is forbidden otherwise.
         """
         r = requests.Request('GET', url=input, params=params)

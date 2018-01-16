@@ -3,6 +3,8 @@
 Frequently Asked Questions
 ==========================
 
+.. image:: https://farm5.staticflickr.com/4290/35294660055_42c02b2316_k_d.jpg
+
 This part of the documentation answers common questions about Requests.
 
 Encoded Data?
@@ -56,7 +58,6 @@ supported:
 
 * Python 2.6
 * Python 2.7
-* Python 3.3
 * Python 3.4
 * Python 3.5
 * Python 3.6

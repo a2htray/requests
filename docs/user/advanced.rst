@@ -3,6 +3,8 @@
 Advanced Usage
 ==============
 
+.. image:: https://farm5.staticflickr.com/4263/35163665790_d182d84f5e_k_d.jpg
+
 This document covers some of Requests more advanced features.
 
 .. _session-objects:
@@ -187,6 +189,25 @@ applied, replace the call to :meth:`Request.prepare()
 
     print(resp.status_code)
 
+When you are using the prepared request flow, keep in mind that it does not take into account the environment.
+This can cause problems if you are using environment variables to change the behaviour of requests.
+For example: Self-signed SSL certificates specified in ``REQUESTS_CA_BUNDLE`` will not be taken into account.
+As a result an ``SSL: CERTIFICATE_VERIFY_FAILED`` is thrown.
+You can get around this behaviour by explicity merging the environment settings into your session::
+
+    from requests import Request, Session
+    
+    s = Session()
+    req = Request('GET', url)
+    
+    prepped = s.prepare_request(req)
+    
+    # Merge environment settings into session
+    settings = s.merge_environment_settings(prepped.url, None, None, None, None)
+    resp = s.send(prepped, **settings)
+    
+    print(resp.status_code)
+    
 .. _verification:
 
 SSL Cert Verification
@@ -224,6 +245,9 @@ Requests can also ignore verifying the SSL certificate if you set ``verify`` to 
     <Response [200]>
 
 By default, ``verify`` is set to True. Option ``verify`` only applies to host certs.
+
+Client Side Certificates
+------------------------
 
 You can also specify a local cert to use as client side certificate, as a single
 file (containing the private key and the certificate) or as a tuple of both
@@ -263,7 +287,7 @@ system.
 For the sake of security we recommend upgrading certifi frequently!
 
 .. _HTTP persistent connection: https://en.wikipedia.org/wiki/HTTP_persistent_connection
-.. _connection pooling: http://urllib3.readthedocs.io/en/latest/reference/index.html#module-urllib3.connectionpool
+.. _connection pooling: https://urllib3.readthedocs.io/en/latest/reference/index.html#module-urllib3.connectionpool
 .. _certifi: http://certifi.io/
 .. _Mozilla trust store: https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
 
@@ -277,7 +301,7 @@ immediately. You can override this behaviour and defer downloading the response
 body until you access the :attr:`Response.content <requests.Response.content>`
 attribute with the ``stream`` parameter::
 
-    tarball_url = 'https://github.com/kennethreitz/requests/tarball/master'
+    tarball_url = 'https://github.com/requests/requests/tarball/master'
     r = requests.get(tarball_url, stream=True)
 
 At this point only the response headers have been downloaded and the connection
@@ -298,14 +322,10 @@ release the connection back to the pool unless you consume all the data or call
 :meth:`Response.close <requests.Response.close>`. This can lead to
 inefficiency with connections. If you find yourself partially reading request
 bodies (or not reading them at all) while using ``stream=True``, you should
-consider using ``contextlib.closing`` (`documented here`_), like this::
+make the request within a ``with`` statement to ensure it's always closed::
 
-    from contextlib import closing
-
-    with closing(requests.get('http://httpbin.org/get', stream=True)) as r:
+    with requests.get('http://httpbin.org/get', stream=True) as r:
         # Do things with the response here.
-
-.. _`documented here`: http://docs.python.org/2/library/contextlib.html#contextlib.closing
 
 .. _keep-alive:
 
@@ -416,7 +436,7 @@ You can assign a hook function on a per-request basis by passing a
 ``{hook_name: callback_function}`` dictionary to the ``hooks`` request
 parameter::
 
-    hooks=dict(response=print_url)
+    hooks={'response': print_url}
 
 That ``callback_function`` will receive a chunk of data as its first
 argument.
@@ -432,11 +452,35 @@ If the callback function returns a value, it is assumed that it is to
 replace the data that was passed in. If the function doesn't return
 anything, nothing else is effected.
 
+::
+
+    def record_hook(r, *args, **kwargs):
+        r.hook_called = True
+        return r
+
 Let's print some request method arguments at runtime::
 
-    >>> requests.get('http://httpbin.org', hooks=dict(response=print_url))
+    >>> requests.get('http://httpbin.org', hooks={'response': print_url})
     http://httpbin.org
     <Response [200]>
+
+You can add multiple hooks to a single request.  Let's call two hooks at once::
+
+    >>> r = requests.get('http://httpbin.org', hooks={'response': [print_url, record_hook]})
+    >>> r.hook_called
+    True
+
+You can also add hooks to a ``Session`` instance.  Any hooks you add will then
+be called on every request made to the session.  For example::
+
+   >>> s = requests.Session()
+   >>> s.hooks['response'].append(print_url)
+   >>> s.get('http://httpbin.org')
+    http://httpbin.org
+    <Response [200]>
+
+A ``Session`` can have multiple hooks, which will be called in the order
+they are added.
 
 .. _custom-auth:
 
@@ -594,6 +638,8 @@ as using a HTTP one::
         'https': 'socks5://user:pass@host:port'
     }
 
+Using the scheme ``socks5`` causes the DNS resolution to happen on the client, rather than on the proxy server. This is in line with curl, which uses the scheme to decide whether to do the DNS resolution on the client or proxy. If you want to resolve the domains on the proxy server, use ``socks5h`` as the scheme.
+
 .. _compliance:
 
 Compliance
@@ -611,7 +657,7 @@ When you receive a response, Requests makes a guess at the encoding to
 use for decoding the response when you access the :attr:`Response.text
 <requests.Response.text>` attribute. Requests will first check for an
 encoding in the HTTP header, and if none is present, will use `chardet
-<http://pypi.python.org/pypi/chardet>`_ to attempt to guess the encoding.
+<https://pypi.python.org/pypi/chardet>`_ to attempt to guess the encoding.
 
 The only time Requests will not do this is if no explicit charset
 is present in the HTTP headers **and** the ``Content-Type``
@@ -639,7 +685,7 @@ from GitHub. Suppose we wanted commit ``a050faf`` on Requests. We would get it
 like so::
 
     >>> import requests
-    >>> r = requests.get('https://api.github.com/repos/kennethreitz/requests/git/commits/a050faf084662f3a352dd1a941f2c7c9f886d4ad')
+    >>> r = requests.get('https://api.github.com/repos/requests/requests/git/commits/a050faf084662f3a352dd1a941f2c7c9f886d4ad')
 
 We should confirm that GitHub responded correctly. If it has, we want to work
 out what type of content it is. Do this like so::
@@ -694,12 +740,12 @@ we should probably avoid making ham-handed POSTS to it. Instead, let's play
 with the Issues feature of GitHub.
 
 This documentation was added in response to
-`Issue #482 <https://github.com/kennethreitz/requests/issues/482>`_. Given that
+`Issue #482 <https://github.com/requests/requests/issues/482>`_. Given that
 this issue already exists, we will use it as an example. Let's start by getting it.
 
 ::
 
-    >>> r = requests.get('https://api.github.com/repos/kennethreitz/requests/issues/482')
+    >>> r = requests.get('https://api.github.com/repos/requests/requests/issues/482')
     >>> r.status_code
     200
 
@@ -742,7 +788,7 @@ is to POST to the thread. Let's do it.
 ::
 
     >>> body = json.dumps({u"body": u"Sounds great! I'll get right on it!"})
-    >>> url = u"https://api.github.com/repos/kennethreitz/requests/issues/482/comments"
+    >>> url = u"https://api.github.com/repos/requests/requests/issues/482/comments"
 
     >>> r = requests.post(url=url, data=body)
     >>> r.status_code
@@ -776,7 +822,7 @@ that.
     5804413
 
     >>> body = json.dumps({u"body": u"Sounds great! I'll get right on it once I feed my cat."})
-    >>> url = u"https://api.github.com/repos/kennethreitz/requests/issues/comments/5804413"
+    >>> url = u"https://api.github.com/repos/requests/requests/issues/comments/5804413"
 
     >>> r = requests.patch(url=url, data=body, auth=auth)
     >>> r.status_code
@@ -838,7 +884,7 @@ Link Headers
 Many HTTP APIs feature Link headers. They make APIs more self describing and
 discoverable.
 
-GitHub uses these for `pagination <http://developer.github.com/v3/#pagination>`_
+GitHub uses these for `pagination <https://developer.github.com/v3/#pagination>`_
 in their API, for example::
 
     >>> url = 'https://api.github.com/users/kennethreitz/repos?page=1&per_page=10'
@@ -935,8 +981,9 @@ response at a time. However, these calls will still block.
 
 If you are concerned about the use of blocking IO, there are lots of projects
 out there that combine Requests with one of Python's asynchronicity frameworks.
-Two excellent examples are `grequests`_ and `requests-futures`_.
+Some excellent examples are `requests-threads`_, `grequests`_,  and `requests-futures`_.
 
+.. _`requests-threads`: https://github.com/requests/requests-threads
 .. _`grequests`: https://github.com/kennethreitz/grequests
 .. _`requests-futures`: https://github.com/ross/requests-futures
 

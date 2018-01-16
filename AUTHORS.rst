@@ -1,19 +1,13 @@
 Requests is written and maintained by Kenneth Reitz and
 various contributors:
 
-Keepers of the Three Crystals
-`````````````````````````````
+Keepers of the Four Crystals
+````````````````````````````
 
 - Kenneth Reitz <me@kennethreitz.org> `@kennethreitz <https://github.com/kennethreitz>`_, Keeper of the Master Crystal.
 - Cory Benfield <cory@lukasa.co.uk> `@lukasa <https://github.com/lukasa>`_
 - Ian Cordasco <graffatcolmingov@gmail.com> `@sigmavirus24 <https://github.com/sigmavirus24>`_
-
-
-
-Urllib3
-```````
-
-- Andrey Petrov <andrey.petrov@shazow.net>
+- Nate Prewitt <nate.prewitt@gmail.com> `@nateprewitt <https://github.com/nateprewitt>`_
 
 
 Patches and Suggestions
@@ -179,4 +173,12 @@ Patches and Suggestions
 - Matt Kohl (`@mattkohl <https://github.com/mattkohl>`_)
 - Jonathan Vanasco (`@jvanasco <https://github.com/jvanasco>`_)
 - David Fontenot (`@davidfontenot <https://github.com/davidfontenot>`_)
-
+- Shmuel Amar (`@shmuelamar <https://github.com/shmuelamar>`_)
+- Gary Wu (`@garywu <https://github.com/garywu>`_)
+- Ryan Pineo (`@ryanpineo <https://github.com/ryanpineo>`_)
+- Ed Morley (`@edmorley <https://github.com/edmorley>`_)
+- Matt Liu <liumatt@gmail.com> (`@mlcrazy <https://github.com/mlcrazy>`_)
+- Taylor Hoff <primdevs@protonmail.com> (`@PrimordialHelios <https://github.com/PrimordialHelios>`_)
+- Arthur Vigil (`@ahvigil <https://github.com/ahvigil>`_)
+- Nehal J Wani (`@nehaljwani <https://github.com/nehaljwani>`_)
+- Demetrios Bairaktaris (`@DemetriosBairaktaris <https://github.com/demetriosbairaktaris>`_)
